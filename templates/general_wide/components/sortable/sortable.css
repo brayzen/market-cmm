@@ -1,0 +1,12 @@
+.ui-sortable-placeholder {
+  visibility: visible !important;
+  height: auto; }
+  .ui-sortable-placeholder:after {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 100%;
+    opacity: .3;
+    background: #4b9561; }
+
+/*# sourceMappingURL=sortable.css.map */

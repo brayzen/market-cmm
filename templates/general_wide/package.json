@@ -1,0 +1,32 @@
+{
+  "name": "general_wide",
+  "version": "1.0.0",
+  "dependencies": {},
+  "description": "",
+  "scripts": {
+    "install": "cp -f ../template_core/gulpfile.js .",
+    "sass" : "gulp sass",
+    "watch": "gulp watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@gitlab.com/flynax-templates/general_wide.git"
+  },
+  "author": "Flynax Software",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://gitlab.com/flynax-templates/general_wide/issues"
+  },
+  "homepage": "https://gitlab.com/flynax-templates/general_wide#README",
+  "devDependencies": {
+    "gulp": "3.9.1",
+    "gulp-if": "2.0.1",
+    "gulp-sass-variables": "1.1.1",
+    "gulp-sass": "3.1.0",
+    "gulp-rename": "1.2.2",
+    "gulp-sourcemaps": "2.6.1",
+    "gulp-strip-comments": "2.5.1",
+    "gulp-util": "3.0.8",
+    "gulp-replace": "0.6.1"
+  }
+}

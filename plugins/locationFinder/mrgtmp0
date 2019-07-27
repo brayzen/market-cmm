@@ -1,0 +1,448 @@
+<?php
+/**copyright**/
+
+class rlLocationFinderAP
+{
+    /**
+    * Flynax IP database url
+    **/
+    var $server = 'http://database.flynax.com/index.php?plugin=locationFinder';
+
+    /**
+    * get mapping data by format key
+    *
+    * @hook - apAjaxRequest
+    *
+    * @param string $key - format key
+    *
+    **/
+    public function getMappingDataByKey($key = false)
+    {
+        $GLOBALS['rlValid']->sql($key);
+        return $GLOBALS['rlDb']->fetch(array('Lat', 'Lng'), array('Format_key' => $key), null, 1, 'geo_mapping', 'row');
+    }
+
+    /**
+    * save mapping data
+    *
+    * @hook - apAjaxRequest
+    *
+    * @param string $formatKey - format key
+    * @param string $googleKey - google key
+    * @param string $neighborhoodKey - neighborhood key
+    * @param string $lat - location latitude
+    * @param string $lng - location longitude
+    *
+    **/
+    public function saveMappingData($formatKey = false, $googleKey = false, $neighborhoodKey = false, $lat = false, $lng = false)
+    {
+        $GLOBALS['rlValid']->sql($formatKey);
+        $GLOBALS['rlValid']->sql($googleKey);
+        $GLOBALS['rlValid']->sql($neighborhoodKey);
+        $GLOBALS['rlValid']->sql($lat);
+        $GLOBALS['rlValid']->sql($lng);
+
+        $fields = array(
+            'Format_key' => $formatKey,
+            'Google_key' => $neighborhoodKey ? $neighborhoodKey : $googleKey,
+            'Neighborhood' => $neighborhoodKey ? '1' : '0',
+            'Target' => substr_count($googleKey, '+') == 2 || $neighborhoodKey ? 'city' : 'region',
+            'Lat' => $lat,
+            'Lng' => $lng,
+            'Verified' => '1'
+        );
+
+        $GLOBALS['reefless']->loadClass('Actions');
+
+        if ($GLOBALS['rlDb']->getOne('ID', "`Format_key` = '{$formatKey}'", 'geo_mapping')) {
+            $update = array('fields' => $fields, 'where' => array('Format_key' => $formatKey));
+            $GLOBALS['rlActions']->updateOne($update, 'geo_mapping');
+        } else {
+            $GLOBALS['rlActions']->insertOne($fields, 'geo_mapping');
+        }
+
+        return true;
+    }
+
+    private function gUnZip($file = false)
+    {
+        if (!$file) {
+            return false;
+        }
+
+        $buffer_size = 4096;
+        $out_file = str_replace('.gz', '', $file);
+
+        // open files (in binary mode)
+        $file = gzopen($file, 'rb');
+        $out_file = fopen($out_file, 'wb');
+
+        // set writable permissions
+        $GLOBALS['reefless']->rlChmod($out_file);
+
+        // read source file and write to destination one
+        while(!gzeof($file)) {
+            fwrite($out_file, gzread($file, $buffer_size));
+        }
+
+        // close files
+        fclose($out_file);
+        gzclose($file);
+
+        return true;
+    }
+
+    /**
+     * ajax actions, import or updated dump
+     *
+     * @since 3.1.0
+     */
+    public function ajax()
+    {
+        global $item, $lang, $out;
+
+        $errors = false;
+        $files_dir = RL_UPLOAD . 'locationFinder' . RL_DS;
+
+        switch($item) {
+            case 'locationFinderGetMapping':
+                if ($mapping_data = $this->getMappingDataByKey($_REQUEST['key'])) {
+                    $out['status'] = 'OK';
+                    $out['results'] = $mapping_data;
+                } else {
+                    $out['status'] = 'ERROR';
+                    $out['message'] = ''; // no message required in this case
+                }
+                break;
+
+            case 'locationFinderSaveMapping':
+                if ($this->saveMappingData($_REQUEST['formatKey'], $_REQUEST['googleKey'], $_REQUEST['neighborhoodKey'], $_REQUEST['lat'], $_REQUEST['lng'])) {
+                    $out['status'] = 'OK';
+                } else {
+                    $out['status'] = 'ERROR';
+                    $out['message'] = ''; // no message required in this case
+                }
+                break;
+
+            case 'locationFinderCheckUpdate':
+                $update = '&update=1&version=' . $GLOBALS['config']['locationFinder_db_version'];
+                $response = $GLOBALS['reefless']->getPageContent($this->server . $update);
+                if ($response) {
+                    $data = json_decode($response, true);
+                    $out['status'] = 'OK';
+                    $out['data'] = $data['update_status'];
+                } else {
+                    $this->errorLog($lang['flynax_connect_fail'], $errors, __LINE__);
+                }
+                break;
+
+            case 'locationFinderPrepare':
+                // create the directory
+                $GLOBALS['reefless']->rlMkdir($files_dir);
+
+                // check for dir
+                if (!is_writable($files_dir)) {
+                    $this->errorLog('Unable to create directory in "<b>' . $files_dir . '</b>", make sure the directory has writable permisitions.', $errors, __LINE__);
+                }
+
+                // download files
+                if (!$errors) {
+                    $response = $GLOBALS['reefless']->getPageContent($this->server);
+                    if ($response) {
+                        $_SESSION['locationFinder'] = array(
+                            'server_data' => json_decode($response, true),
+                            'file_number' => 1
+                        );
+                    } else {
+                        $this->errorLog($lang['flynax_connect_fail'], $errors, __LINE__);
+                    }
+                }
+
+                // prepare response
+                if (!$errors) {
+                    $out = array(
+                        'status' => 'OK',
+                        'data' => json_decode($response, true)
+                    );
+                } else {
+                    $out = array(
+                        'status' => 'ERROR',
+                        'data' => $errors
+                    );
+                }
+                break;
+
+            case 'locationFinderUploadFile':
+                $file_number = (int) $_REQUEST['file'];
+
+                $file_name = 'part' . $file_number . '.sql';
+                $source = $_SESSION['locationFinder']['server_data']['base_url'] . $file_name . '.gz';
+                $destination = $files_dir . $file_name . '.gz';
+
+                if ($this->copyFile($source, $destination)) {
+                    // unzip file
+                    if (!$this->gUnZip($destination)) {
+                        $this->errorLog('Unable to ungzip the archive "<b>' . $destination . '</b>" gzopen() method failed, please contact Flynax Support.', $errors, __LINE__);
+                    } else {
+                        unlink($destination);
+                    }
+
+                    if (!$errors) {
+                        $_SESSION['locationFinder']['current_file'] = $file_name;
+                        $_SESSION['locationFinder']['current_file_number'] = $file_number;
+
+                        // count current file lines
+                        $_SESSION['extra_dumps_lines'] = $this->countFileLines($files_dir . $file_name);
+
+                        if ($file_number == 1) {
+                            // clear dump data
+                            $this->clearDumpData();
+                        }
+                    }
+                } else {
+                    $this->errorLog('Unable to copy file "<b>' . $source . '</b>" from Flynax server, please try later or contact Flynax Support.', $errors, __LINE__);
+                }
+
+                // prepare response
+                if (!$errors) {
+                    $out = array(
+                        'status' => 'OK',
+                        'data' => ''
+                    );
+                } else {
+                    $out = array(
+                        'status' => 'ERROR',
+                        'data' => $errors
+                    );
+                }
+                break;
+
+            case 'locationFinderImport':
+                $dump_file = $files_dir . $_SESSION['locationFinder']['current_file'];
+
+                if (is_readable($dump_file)) {
+                    $out = $this->importDump($dump_file);
+                } else {
+                    $out = array('error' => "Can not find/read SQL dump: {$dump_file}, please contact Flynax support");
+                }
+                break;
+        }
+    }
+
+     /**
+     * import dump file
+     *
+     * @since 1.3.0
+     *
+     * @param string $dump_file - file path
+     *
+     * @return array - results data array
+     */
+    private function importDump($dump_file = false)
+    {
+        $file = fopen($dump_file, 'r');
+
+        $line_per_session = 15000;
+        $data_chunk_lenght = 16384;
+        $start_line = $_SESSION['extra_dumps_start_line'];
+        $session_line = 0;
+
+        $query = '';
+        $current_line = $start_line;
+        $ret = array();
+
+        fseek($file, $_SESSION['extra_dumps_pointer']);
+
+        while (!feof($file) && $current_line <= $start_line+$line_per_session) {
+            $line = fgets($file, $data_chunk_lenght);
+            $session_line++;
+
+            // skip commented lines
+            if ((bool) preg_match('/^(\-\-|\#|\/\*)/', $line)) {
+                continue;
+            }
+
+            $query .= $line;
+            if ((bool) preg_match('/\;(\r\n?|\n)$/', $line) || feof($file)) {
+                $query_result = $this->importDumpRunQuery($query);
+                if ($query_result !== true) {
+                    $ret = array('error' => $query_result);
+                }
+
+                $query = '';
+            }
+
+            if (feof($file)) {
+                fclose($file);
+                unlink($dump_file);
+                $current_line = 0;
+                $this->clearDumpData();
+                
+                if ($_SESSION['locationFinder']['current_file_number'] < $_SESSION['locationFinder']['server_data']['calc']) {
+                    $ret['action'] = 'next_file';
+                } else {
+                    $ret['action'] = 'end';
+
+                    // update databsae version
+                    $GLOBALS['reefless']->loadClass('Actions');
+                    $GLOBALS['rlConfig']->setConfig('locationFinder_db_version', $_SESSION['locationFinder']['server_data']['version']);
+
+                    unset($_SESSION['locationFinder']);
+                }
+                
+                break;
+            }
+
+            // last line
+            if ($current_line == $start_line+$line_per_session && !(bool) preg_match('/\;(\r\n?|\n)$/', $line)) {
+                $line_per_session++; // go one more line forward
+            }
+
+            $current_line++;
+            $ret['action'] = 'next_stack';
+        }
+
+        $_SESSION['extra_dumps_progress_line'] += $session_line;
+        $_SESSION['extra_dumps_start_line'] = $current_line;
+        $_SESSION['extra_dumps_pointer'] = ftell($file);
+
+        $ret['lines'] = $session_line;
+        $ret['line_num'] = $_SESSION['extra_dumps_progress_line'];
+        $progress = (100 / $_SESSION['locationFinder']['server_data']['calc']) * $_SESSION['locationFinder']['current_file_number'];
+        $progress_stack = (100 / $_SESSION['locationFinder']['server_data']['calc']);
+
+        $ret['progress'] = round(($progress - $progress_stack) + ceil(($_SESSION['extra_dumps_progress_line'] * $progress_stack) / $_SESSION['extra_dumps_lines']), 0);
+
+        if ($ret['action'] == 'end') {
+            $this->clearDumpData();
+        }
+
+        return $ret;
+    }
+
+    /**
+     * run sql query
+     *
+     * @since 1.3.0
+     *
+     * @param string $query - mysql query
+     *
+     * @return mixed - error or true
+     */
+    private function importDumpRunQuery($query = false)
+    {
+        $query = trim($query);
+
+        if (!$query) {
+            return true;
+        }
+        $query = str_replace(array('{db_prefix}', PHP_EOL), array(RL_DBPREFIX, ''), $query);
+
+        $GLOBALS['rlDb']->dieIfError = false;
+        $GLOBALS['rlDb']->query($query);
+
+        if ($GLOBALS['rlDb']->lastErrno()) {
+            $error  = "Can not run sql query." . PHP_EOL;
+            $error .= "Error: " . $GLOBALS['rlDb']->lastError() . '; '. PHP_EOL;
+            $error .= "Query: " . $query;
+        }
+
+        return $error ? $error : true;
+    }
+
+    /**
+     * error hander, adds error to global errors array and logs error to the errorLog file
+     *
+     * @since 3.1.0
+     *
+     * @param string $msd - error message
+     * @param array $errors - global errors array
+     * @param string $line - related code line
+     */
+    private function errorLog($msg = false, &$errors, $line)
+    {
+        $errors[] = $msg;
+        $GLOBALS['rlDebug']->logger('Location Finder Plugin Error: ' . $msg . ' On ' . __FILE__ . '(line #' . $line . ')');
+    }
+
+    /**
+     * copy file
+     *
+     * @since 3.1.0
+     *
+     * @param string $source - source file path
+     * @param string $destination - destination file path
+     *
+     * @return bool - is file coppied or not
+     */
+    private function copyFile($source = false, $destination = false)
+    {
+        if (!copy($source, $destination)) {
+            // alternative stream to stream copy
+            $this->time_limit = 0;
+            $file = file_get_contents($source);
+
+            $handle = fopen($destination, "w");
+            fwrite($handle, $file);
+            fclose($handle);
+
+            if (!file_exists($destination)) {
+                return false;
+            }
+        }
+
+        $GLOBALS['reefless']->rlChmod($destination);
+
+        return true;
+    }
+
+    /**
+     * count file lines
+     *
+     * @since 3.1.0
+     *
+     * @param string $file - file path
+     *
+     * @return int - count of lines
+     */
+    private function countFileLines($file)
+    {
+        $count = 0;
+        $fp = fopen($file, 'r');
+
+        while (!feof($fp)) {
+            fgets($fp);
+            $count++;
+        }
+
+        fclose($fp);
+        return $count;
+    }
+
+    /**
+     * clear session data
+     *
+     * @since 3.1.0
+     */
+    private function clearDumpData() {
+        unset($_SESSION['extra_dumps_start_line'],
+            $_SESSION['extra_dumps_pointer'],
+            $_SESSION['extra_dumps_progress_line'],
+            $_SESSION['extra_dumps_total_lines'],
+            $_SESSION['extra_dumps_current']);
+    }
+
+    /**
+     * display map on edit listing page
+     *
+     * @hook - apAjaxRequest
+     *
+     * @since 3.1.1
+     */
+    public function hookApTplListingsFormEdit()
+    {
+        if ($GLOBALS['rlListingTypes']->types[$GLOBALS['listing']['Listing_type']]['Location_finder']) {
+            $GLOBALS['rlSmarty']->display(RL_ROOT . 'plugins' . RL_DS . 'locationFinder' . RL_DS . 'admin' . RL_DS . 'map.tpl');
+        }
+    }
+}

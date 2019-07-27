@@ -1,0 +1,30 @@
+@import "../../css/sass/media"
+
+img.icon.delete,
+img.icon.cancel,
+img.icon.manage,
+img.icon.crop 
+    width: 17px
+    height: 17px
+    background: url('../../img/gallery.png') right -489px no-repeat
+    cursor: pointer
+    opacity: 0.7
+
+    +respond-to(pixel_ratio)
+        background: url('../../img/@2x/gallery2.png') right -755px no-repeat
+        background-size: 40px auto
+
+img.icon:hover 
+    opacity: 1
+
+img.icon.manage 
+    background-position: left -489px
+
+    +respond-to(pixel_ratio)
+        background-position: 0 -755px
+
+img.icon.crop 
+    background-position: 0 -513px
+
+    +respond-to(pixel_ratio)
+        background-position: right -776px
