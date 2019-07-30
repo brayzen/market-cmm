@@ -1,5 +1,5 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/coacjyke/repositories/market-cmm/
+    - export DEPLOYPATH=/home/coacjyke/market-cmm/
     - /bin/cp index.html $DEPLOYPATH
